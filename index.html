@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音声ジャーナル(実験版)</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; color: #222; }
+  h1 { font-size: 20px; }
+  .card { border: 1px solid #ccc; border-radius: 10px; padding: 14px; margin: 12px 0; }
+  button { font-size: 18px; padding: 14px 22px; border-radius: 10px; border: none; background: #1a73e8; color: #fff; }
+  button.stop { background: #d93025; }
+  button.save { background: #188038; }
+  button:disabled { background: #9aa0a6; }
+  .field { margin: 10px 0; }
+  .field label { font-weight: bold; display: block; font-size: 13px; color: #555; }
+  .field textarea { width: 100%; box-sizing: border-box; min-height: 52px; font-size: 16px; }
+  .q { margin: 8px 0; }
+  .q label { display: block; font-size: 14px; margin-bottom: 4px; }
+  .q input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px; }
+  .hidden { display: none; }
+  #log { color: #b3261e; font-size: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>音声ジャーナル(実験版)</h1>
+
+  <div class="card" id="card-id">
+    <label style="font-size:14px;">生徒ID</label>
+    <input id="student-id" placeholder="例: T01" style="font-size:18px; width:100%; padding:10px;">
+    <p style="font-size:14px; color:#555;">今日の学習(教科・時間・つまずいた点・次にやること)を1〜3分、そのまま話してください。</p>
+    <button id="btn-start" onclick="startRec()">録音を始める</button>
+  </div>
+
+  <div class="card hidden" id="card-rec">
+    <p>録音中… <span id="rec-time">0:00</span>(3分で自動停止)</p>
+    <button class="stop" onclick="stopRec()">話し終える</button>
+  </div>
+
+  <div class="card hidden" id="card-wait">
+    <p>AIが整理中…(<span id="wait-time">0秒</span>経過)</p>
+  </div>
+
+  <div class="card hidden" id="card-confirm">
+    <p>AIの整理結果です。間違いがあれば直接直してください。</p>
+    <div class="field"><label>学習内容</label><textarea id="f-content"></textarea></div>
+    <div class="field"><label>教科別の学習時間</label><textarea id="f-subjects"></textarea></div>
+    <div class="field"><label>困難・つまずき</label><textarea id="f-difficulties"></textarea></div>
+    <div class="field"><label>計画との差</label><textarea id="f-plan_gap"></textarea></div>
+    <div class="field"><label>次の目標</label><textarea id="f-next_goal"></textarea></div>
+    <div class="field"><label>支援希望</label><textarea id="f-support"></textarea></div>
+    <div id="questions"></div>
+    <button class="save" id="btn-save" onclick="saveEntry()">この内容で保存する</button>
+  </div>
+
+  <div class="card hidden" id="card-done"><p>保存しました。おつかれさま。</p></div>
+
+  <p id="log"></p>
+
+<script>
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwJ69Hof74F6VY-JLDiK1mTjOJdko0woPn_KHrnQAbCD2sXEQwJqMTMVPbUIbOo-DBJ/exec';
+
+let recorder = null, chunks = [], mimeType = '';
+let recStart = 0, recEnd = 0, timerId = null;
+let waitStart = 0, waitId = null, waitedSec = 0, durSec = 0;
+let entry = null;
+
+function log(msg) { document.getElementById('log').textContent = msg; }
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function val(id)  { return document.getElementById(id).value; }
+
+// 端末ごとに録音形式を自動選択(Android=WebM/Opus、iPhone/iPad=mp4/AAC)
+function mimePick() {
+  const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+  for (const c of cands) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return '';
+}
+
+async function startRec() {
+  const id = val('student-id').trim();
+  if (!id) { log('生徒IDを入力してください'); return; }
+  if (!window.MediaRecorder) { log('この端末・ブラウザは録音に対応していません'); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mimeType = mimePick();
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : undefined);
+    chunks = [];
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = () => sendAudio(id);
+    recorder.start(1000);
+    recStart = Date.now();
+    timerId = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      document.getElementById('rec-time').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      if (s >= 180) stopRec();
+    }, 500);
+    hide('card-id'); show('card-rec'); log('');
+  } catch (err) { log('マイクが許可されていません: ' + err.message); }
+}
+
+function stopRec() {
+  clearInterval(timerId);
+  recEnd = Date.now();
+  durSec = Math.floor((recEnd - recStart) / 1000);
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+function sendAudio(id) {
+  hide('card-rec'); show('card-wait');
+  waitStart = Date.now();
+  waitId = setInterval(() => {
+    document.getElementById('wait-time').textContent = Math.floor((Date.now() - waitStart) / 1000) + '秒';
+  }, 500);
+
+  const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const base64 = reader.result.split(',')[1];
+    const res = await post({
+      action: 'analyze', studentId: id,
+      mimeType: mimeType || 'audio/webm', audioBase64: base64
+    });
+    clearInterval(waitId);
+    waitedSec = Math.floor((Date.now() - waitStart) / 1000);
+    hide('card-wait');
+    if (!res.ok) { log('エラー: ' + (res.error || '') + '\n' + (res.detail || '')); return; }
+    entry = res.entry;
+    renderConfirm(entry);
+    show('card-confirm');
+  };
+  reader.readAsDataURL(blob);
+}
+
+// Content-Typeを指定しない(CORSの事前リクエストを避けるため。この形が重要)
+async function post(body) {
+  const r = await fetch(WEB_APP_URL, { method: 'POST', body: JSON.stringify(body) });
+  return r.json();
+}
+
+function renderConfirm(en) {
+  document.getElementById('f-content').value      = en.content || '';
+  document.getElementById('f-subjects').value     = (en.subjects || []).map(s =>
+    (s.subject || '') + (s.minutes ? ':' + s.minutes + '分' : '')).join(' / ');
+  document.getElementById('f-difficulties').value = en.difficulties || '';
+  document.getElementById('f-plan_gap').value     = en.plan_gap || '';
+  document.getElementById('f-next_goal').value    = en.next_goal || '';
+  document.getElementById('f-support').value      = en.support || '';
+  const q = document.getElementById('questions');
+  q.innerHTML = '';
+  (en.questions || []).forEach((question, i) => {
+    q.insertAdjacentHTML('beforeend',
+      '<div class="q"><label>' + question + '</label>' +
+      '<input id="q' + i + '" placeholder="答えたくなければ空欄でOK"></div>');
+  });
+}
+
+async function saveEntry() {
+  document.getElementById('btn-save').disabled = true;
+  const answers = (entry.questions || []).map((q, i) => {
+    const el = document.getElementById('q' + i);
+    return el ? el.value.trim() : '';
+  });
+  const res = await post({
+    action: 'save',
+    studentId: val('student-id').trim(),
+    durationSec: durSec,
+    waitSec: waitedSec,
+    subjectsText: val('f-subjects'),
+    entry: {
+      content: val('f-content'), difficulties: val('f-difficulties'),
+      plan_gap: val('f-plan_gap'), next_goal: val('f-next_goal'),
+      support: val('f-support'), transcript: (entry.transcript || ''),
+      questions: (entry.questions || [])
+    },
+    answers: answers
+  });
+  if (!res.ok) { log('保存エラー: ' + (res.error || '')); document.getElementById('btn-save').disabled = false; return; }
+  hide('card-confirm'); show('card-done');
+}
+</script>
+</body>
+</html>
