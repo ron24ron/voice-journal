@@ -8,10 +8,13 @@
   body { font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; color: #222; }
   h1 { font-size: 20px; }
   .card { border: 1px solid #ccc; border-radius: 10px; padding: 14px; margin: 12px 0; }
-  button { font-size: 18px; padding: 14px 22px; border-radius: 10px; border: none; background: #1a73e8; color: #fff; }
+  button { font-size: 18px; padding: 14px 22px; border-radius: 10px; border: none; background: #1a73e8; color: #fff; margin: 4px 0; }
   button.stop { background: #d93025; }
   button.save { background: #188038; }
-  button:disabled { background: #9aa0a6; }
+  button.sub  { background: #fff; color: #1a73e8; border: 1px solid #1a73e8; font-size: 16px; padding: 10px 16px; }
+  button:disabled { background: #9aa0a6; color: #fff; border: none; }
+  .row label { font-size: 14px; display: block; margin-top: 8px; }
+  .row input { font-size: 18px; width: 100%; box-sizing: border-box; padding: 10px; }
   .field { margin: 10px 0; }
   .field label { font-weight: bold; display: block; font-size: 13px; color: #555; }
   .field textarea { width: 100%; box-sizing: border-box; min-height: 52px; font-size: 16px; }
@@ -19,28 +22,49 @@
   .q label { display: block; font-size: 14px; margin-bottom: 4px; }
   .q input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px; }
   .hidden { display: none; }
+  .err { color: #b3261e; font-weight: bold; }
   #log { color: #b3261e; font-size: 14px; white-space: pre-wrap; }
+  #detail { color: #777; font-size: 12px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
   <h1>音声ジャーナル(実験版)</h1>
 
+  <!-- 1. 入力開始 -->
   <div class="card" id="card-id">
-    <label style="font-size:14px;">生徒ID</label>
-    <input id="student-id" placeholder="例: T01" style="font-size:18px; width:100%; padding:10px;">
+    <div class="row">
+      <label for="student-id">生徒ID</label>
+      <input id="student-id" placeholder="例: T01" autocomplete="off" autocapitalize="characters">
+    </div>
+    <div class="row">
+      <label for="access-code">合言葉</label>
+      <input id="access-code" placeholder="先生から聞いた合言葉" autocomplete="off">
+    </div>
     <p style="font-size:14px; color:#555;">今日の学習(教科・時間・つまずいた点・次にやること)を1〜3分、そのまま話してください。</p>
     <button id="btn-start" onclick="startRec()">録音を始める</button>
   </div>
 
+  <!-- 2. 録音中 -->
   <div class="card hidden" id="card-rec">
     <p>録音中… <span id="rec-time">0:00</span>(3分で自動停止)</p>
+    <p style="font-size:13px; color:#555;">録音中は画面を消したり、別のアプリに切り替えたりしないでください。</p>
     <button class="stop" onclick="stopRec()">話し終える</button>
   </div>
 
+  <!-- 3. AI整理待ち -->
   <div class="card hidden" id="card-wait">
     <p>AIが整理中…(<span id="wait-time">0秒</span>経過)</p>
+    <p style="font-size:13px; color:#555;">このページを閉じずにお待ちください。</p>
   </div>
 
+  <!-- 3'. エラー(録音は残っているので再送できる) -->
+  <div class="card hidden" id="card-error">
+    <p class="err" id="err-msg"></p>
+    <button id="btn-retry" onclick="sendAudio()">もう一度送る</button>
+    <button class="sub" onclick="resetToStart()">録音し直す</button>
+  </div>
+
+  <!-- 4. 確認・修正 -->
   <div class="card hidden" id="card-confirm">
     <p>AIの整理結果です。間違いがあれば直接直してください。</p>
     <div class="field"><label>学習内容</label><textarea id="f-content"></textarea></div>
@@ -51,24 +75,54 @@
     <div class="field"><label>支援希望</label><textarea id="f-support"></textarea></div>
     <div id="questions"></div>
     <button class="save" id="btn-save" onclick="saveEntry()">この内容で保存する</button>
+    <p class="err" id="save-err"></p>
   </div>
 
-  <div class="card hidden" id="card-done"><p>保存しました。おつかれさま。</p></div>
+  <!-- 5. 完了 -->
+  <div class="card hidden" id="card-done">
+    <p>保存しました。おつかれさま。</p>
+    <button class="sub" onclick="resetToStart()">最初の画面に戻る</button>
+  </div>
 
   <p id="log"></p>
+  <p id="detail"></p>
 
 <script>
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwJ69Hof74F6VY-JLDiK1mTjOJdko0woPn_KHrnQAbCD2sXEQwJqMTMVPbUIbOo-DBJ/exec';
+const MAX_SEC     = 180;     // 録音の上限秒
+const MIN_SEC     = 3;       // これより短い録音は送らない
+const TIMEOUT_MS  = 120000;  // 通信の待ち時間上限(2分)
+const ID_PATTERN  = /^[A-Za-z0-9-]{1,10}$/;
 
-let recorder = null, chunks = [], mimeType = '';
-let recStart = 0, recEnd = 0, timerId = null;
-let waitStart = 0, waitId = null, waitedSec = 0, durSec = 0;
-let entry = null;
+let recorder = null, stream = null, chunks = [], mimeType = '', lastBlob = null;
+let recStart = 0, timerId = null, waitId = null, waitedSec = 0, durSec = 0;
+let entry = null, busy = false;
 
-function log(msg) { document.getElementById('log').textContent = msg; }
-function show(id) { document.getElementById(id).classList.remove('hidden'); }
-function hide(id) { document.getElementById(id).classList.add('hidden'); }
-function val(id)  { return document.getElementById(id).value; }
+// ---------- 小道具 ----------
+function $(id)    { return document.getElementById(id); }
+function val(id)  { return $(id).value; }
+function show(id) { $(id).classList.remove('hidden'); }
+function hide(id) { $(id).classList.add('hidden'); }
+function log(msg, detail) { $('log').textContent = msg || ''; $('detail').textContent = detail || ''; }
+const CARDS = ['card-id', 'card-rec', 'card-wait', 'card-error', 'card-confirm', 'card-done'];
+function only(id) { CARDS.forEach(c => c === id ? show(c) : hide(c)); }
+
+// 生徒IDと合言葉を端末に覚えておく(使えない環境でも動くようにtry/catch)
+const store = {
+  get(k)    { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+window.addEventListener('load', () => {
+  $('student-id').value  = store.get('vj_sid');
+  $('access-code').value = store.get('vj_code');
+});
+
+// 録音中・整理中にページを閉じようとしたら警告
+window.addEventListener('beforeunload', e => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
+
+function creds() {
+  return { studentId: val('student-id').trim().toUpperCase(), accessCode: val('access-code').trim() };
+}
 
 // 端末ごとに録音形式を自動選択(Android=WebM/Opus、iPhone/iPad=mp4/AAC)
 function mimePick() {
@@ -79,106 +133,208 @@ function mimePick() {
   return '';
 }
 
+// マイクを確実に手放す(スマホのマイク使用中表示を消す)
+function releaseMic() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+function resetToStart() {
+  clearInterval(timerId); clearInterval(waitId);
+  releaseMic();
+  recorder = null; chunks = []; lastBlob = null; entry = null; busy = false;
+  $('btn-start').disabled = false;
+  $('btn-save').disabled = false;
+  $('save-err').textContent = '';
+  only('card-id');
+}
+
+// ---------- 録音 ----------
 async function startRec() {
-  const id = val('student-id').trim();
-  if (!id) { log('生徒IDを入力してください'); return; }
-  if (!window.MediaRecorder) { log('この端末・ブラウザは録音に対応していません'); return; }
+  if (busy) return;
+  const c = creds();
+  if (!c.studentId)                  { log('生徒IDを入力してください'); return; }
+  if (!ID_PATTERN.test(c.studentId)) { log('生徒IDは半角英数字で入力してください(例: T01)'); return; }
+  if (!c.accessCode)                 { log('合言葉を入力してください'); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    log('この端末・ブラウザは録音に対応していません。Chrome または Safari の最新版で開いてください'); return;
+  }
+  store.set('vj_sid', c.studentId);
+  store.set('vj_code', c.accessCode);
+
+  busy = true;
+  $('btn-start').disabled = true;
+  log('');
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
     mimeType = mimePick();
     recorder = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : undefined);
+    if (!mimeType) mimeType = recorder.mimeType || 'audio/webm';
     chunks = [];
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-    recorder.onstop = () => sendAudio(id);
+    recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = onRecStopped;
     recorder.start(1000);
+
     recStart = Date.now();
+    $('rec-time').textContent = '0:00';
     timerId = setInterval(() => {
       const s = Math.floor((Date.now() - recStart) / 1000);
-      document.getElementById('rec-time').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-      if (s >= 180) stopRec();
+      $('rec-time').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      if (s >= MAX_SEC) stopRec();
     }, 500);
-    hide('card-id'); show('card-rec'); log('');
-  } catch (err) { log('マイクが許可されていません: ' + err.message); }
+    only('card-rec');
+  } catch (err) {
+    releaseMic();
+    busy = false;
+    $('btn-start').disabled = false;
+    log('マイクを使えませんでした。ブラウザの設定で、このサイトのマイクを「許可」にしてください。', err.message);
+  }
 }
 
 function stopRec() {
+  // 自動停止とボタンが重なっても1回だけ止める
+  if (!recorder || recorder.state === 'inactive') return;
   clearInterval(timerId);
-  recEnd = Date.now();
-  durSec = Math.floor((recEnd - recStart) / 1000);
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  durSec = Math.floor((Date.now() - recStart) / 1000);
+  recorder.stop();
 }
 
-function sendAudio(id) {
-  hide('card-rec'); show('card-wait');
-  waitStart = Date.now();
+function onRecStopped() {
+  releaseMic();
+  lastBlob = new Blob(chunks, { type: mimeType });
+  chunks = [];
+  if (durSec < MIN_SEC || lastBlob.size < 1000) {
+    resetToStart();
+    log('録音が短すぎました。もう一度、少し長めに話してください。');
+    return;
+  }
+  sendAudio();
+}
+
+// ---------- AIに送って整理 ----------
+async function sendAudio() {
+  if (!lastBlob) { resetToStart(); return; }
+  busy = true;
+  only('card-wait');
+  log('');
+  const waitStart = Date.now();
+  $('wait-time').textContent = '0秒';
+  clearInterval(waitId);
   waitId = setInterval(() => {
-    document.getElementById('wait-time').textContent = Math.floor((Date.now() - waitStart) / 1000) + '秒';
+    $('wait-time').textContent = Math.floor((Date.now() - waitStart) / 1000) + '秒';
   }, 500);
 
-  const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const base64 = reader.result.split(',')[1];
-    const res = await post({
-      action: 'analyze', studentId: id,
-      mimeType: mimeType || 'audio/webm', audioBase64: base64
-    });
-    clearInterval(waitId);
-    waitedSec = Math.floor((Date.now() - waitStart) / 1000);
-    hide('card-wait');
-    if (!res.ok) { log('エラー: ' + (res.error || '') + '\n' + (res.detail || '')); return; }
-    entry = res.entry;
-    renderConfirm(entry);
-    show('card-confirm');
-  };
-  reader.readAsDataURL(blob);
+  let res;
+  try {
+    const base64 = await blobToBase64(lastBlob);
+    res = await post(Object.assign({ action: 'analyze', mimeType: mimeType.split(';')[0], audioBase64: base64 }, creds()));
+  } catch (err) {
+    res = { ok: false, error: '通信できませんでした。電波の良い場所で「もう一度送る」を押してください。', detail: String(err) };
+  }
+  clearInterval(waitId);
+  waitedSec = Math.floor((Date.now() - waitStart) / 1000);
+
+  if (!res.ok) {
+    if (res.kind === 'auth') {           // 合言葉・IDの間違いは入力画面に戻す
+      resetToStart();
+      log(res.error);
+      return;
+    }
+    showError(res);
+    return;
+  }
+  entry = res.entry || {};
+  renderConfirm(entry);
+  only('card-confirm');
+}
+
+function showError(res) {
+  busy = false;                          // 録音は残っているので閉じても再録音で済む
+  $('err-msg').textContent = res.error || 'エラーが起きました';
+  log('', res.detail || '');
+  only('card-error');
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
 }
 
 // Content-Typeを指定しない(CORSの事前リクエストを避けるため。この形が重要)
 async function post(body) {
-  const r = await fetch(WEB_APP_URL, { method: 'POST', body: JSON.stringify(body) });
-  return r.json();
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const r    = await fetch(WEB_APP_URL, { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal });
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch (e) { return { ok: false, error: 'サーバーの応答を読み取れませんでした', detail: text.slice(0, 200) }; }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
+// ---------- 確認画面 ----------
 function renderConfirm(en) {
-  document.getElementById('f-content').value      = en.content || '';
-  document.getElementById('f-subjects').value     = (en.subjects || []).map(s =>
+  $('f-content').value      = en.content || '';
+  $('f-subjects').value     = (en.subjects || []).map(s =>
     (s.subject || '') + (s.minutes ? ':' + s.minutes + '分' : '')).join(' / ');
-  document.getElementById('f-difficulties').value = en.difficulties || '';
-  document.getElementById('f-plan_gap').value     = en.plan_gap || '';
-  document.getElementById('f-next_goal').value    = en.next_goal || '';
-  document.getElementById('f-support').value      = en.support || '';
-  const q = document.getElementById('questions');
-  q.innerHTML = '';
+  $('f-difficulties').value = en.difficulties || '';
+  $('f-plan_gap').value     = en.plan_gap || '';
+  $('f-next_goal').value    = en.next_goal || '';
+  $('f-support').value      = en.support || '';
+
+  // AIの質問は textContent で入れる(HTMLとして解釈させない)
+  const box = $('questions');
+  box.innerHTML = '';
   (en.questions || []).forEach((question, i) => {
-    q.insertAdjacentHTML('beforeend',
-      '<div class="q"><label>' + question + '</label>' +
-      '<input id="q' + i + '" placeholder="答えたくなければ空欄でOK"></div>');
+    const wrap  = document.createElement('div');  wrap.className = 'q';
+    const label = document.createElement('label'); label.textContent = question; label.htmlFor = 'q' + i;
+    const input = document.createElement('input'); input.id = 'q' + i; input.placeholder = '答えたくなければ空欄でOK';
+    wrap.appendChild(label); wrap.appendChild(input); box.appendChild(wrap);
   });
+  $('btn-save').disabled = false;
+  $('save-err').textContent = '';
 }
 
+// ---------- 保存 ----------
 async function saveEntry() {
-  document.getElementById('btn-save').disabled = true;
+  $('btn-save').disabled = true;
+  $('save-err').textContent = '';
   const answers = (entry.questions || []).map((q, i) => {
-    const el = document.getElementById('q' + i);
+    const el = $('q' + i);
     return el ? el.value.trim() : '';
   });
-  const res = await post({
-    action: 'save',
-    studentId: val('student-id').trim(),
-    durationSec: durSec,
-    waitSec: waitedSec,
-    subjectsText: val('f-subjects'),
-    entry: {
-      content: val('f-content'), difficulties: val('f-difficulties'),
-      plan_gap: val('f-plan_gap'), next_goal: val('f-next_goal'),
-      support: val('f-support'), transcript: (entry.transcript || ''),
-      questions: (entry.questions || [])
-    },
-    answers: answers
-  });
-  if (!res.ok) { log('保存エラー: ' + (res.error || '')); document.getElementById('btn-save').disabled = false; return; }
-  hide('card-confirm'); show('card-done');
+  let res;
+  try {
+    res = await post(Object.assign({
+      action: 'save',
+      durationSec: durSec,
+      waitSec: waitedSec,
+      subjectsText: val('f-subjects'),
+      entry: {
+        content: val('f-content'), difficulties: val('f-difficulties'),
+        plan_gap: val('f-plan_gap'), next_goal: val('f-next_goal'),
+        support: val('f-support'), transcript: (entry.transcript || ''),
+        questions: (entry.questions || [])
+      },
+      answers: answers
+    }, creds()));
+  } catch (err) {
+    res = { ok: false, error: '通信できませんでした。電波の良い場所でもう一度「保存する」を押してください。', detail: String(err) };
+  }
+  if (!res.ok) {
+    $('save-err').textContent = res.error || '保存できませんでした';
+    log('', res.detail || '');
+    $('btn-save').disabled = false;      // 入力内容は残っているので押し直せる
+    return;
+  }
+  busy = false;
+  lastBlob = null;
+  only('card-done');
 }
 </script>
 </body>
