@@ -68,6 +68,7 @@
   <!-- 4. 確認・修正 -->
   <div class="card hidden" id="card-confirm">
     <p>AIの整理結果です。間違いがあれば直接直してください。</p>
+    <p id="status-note" class="hidden" style="background:#fef7e0; border-radius:8px; padding:10px; font-size:14px;"></p>
     <div class="field"><label>学習内容</label><textarea id="f-content"></textarea></div>
     <div class="field"><label>教科別の学習時間</label><textarea id="f-subjects"></textarea></div>
     <div class="field"><label>困難・つまずき</label><textarea id="f-difficulties"></textarea></div>
@@ -76,6 +77,7 @@
     <div class="field"><label>支援希望</label><textarea id="f-support"></textarea></div>
     <div id="questions"></div>
     <button class="save" id="btn-save" onclick="saveEntry()">この内容で保存する</button>
+    <button class="sub" onclick="resetToStart()">録音し直す</button>
     <p class="err" id="save-err"></p>
   </div>
 
@@ -313,6 +315,14 @@ function renderConfirm(en) {
   $('f-next_goal').value    = en.next_goal || '';
   $('f-support').value      = en.support || '';
 
+  // AIの判定に応じたひとこと
+  const notes = {
+    not_studied: '予定どおりにできなかった日の振り返りも、大切な記録です。下の質問に答えて保存しましょう。',
+    off_topic:   '今日の学習についてのお話が聞き取れませんでした。下の質問に答えて保存するか、「録音し直す」を押してください。'
+  };
+  if (notes[en.status]) { $('status-note').textContent = notes[en.status]; show('status-note'); }
+  else                  { $('status-note').textContent = ''; hide('status-note'); }
+
   // AIの質問は textContent で入れる(HTMLとして解釈させない)
   const box = $('questions');
   box.innerHTML = '';
@@ -345,7 +355,7 @@ async function saveEntry() {
         content: val('f-content'), difficulties: val('f-difficulties'),
         plan_gap: val('f-plan_gap'), next_goal: val('f-next_goal'),
         support: val('f-support'), transcript: (entry.transcript || ''),
-        questions: (entry.questions || [])
+        questions: (entry.questions || []), status: (entry.status || '')
       },
       answers: answers
     }, creds()));
