@@ -29,6 +29,45 @@
   #total-line { font-weight: bold; padding: 8px 10px; border-radius: 8px; }
   #total-line.ok   { background: #e6f4ea; color: #137333; }
   #total-line.less { background: #fef7e0; color: #8a5300; }
+  /* やることリスト(確認画面) */
+  .todo-row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+  .todo-row input[type=checkbox] { width: 22px; height: 22px; }
+  .todo-row .t-task { flex: 1 1 60%; font-size: 16px; padding: 6px; min-width: 0; }
+  .todo-row .t-due  { font-size: 15px; padding: 5px; margin-left: 28px; }
+  .todo-row .t-due::before { content: ''; }
+  /* ふりかえり画面 */
+  .my-head { display: flex; justify-content: space-between; align-items: center; }
+  .my-head h2 { font-size: 18px; margin: 0; }
+  .sec { border-top: 1px solid #e0e0e0; padding-top: 10px; margin-top: 14px; }
+  .sec h3 { font-size: 16px; margin: 0 0 8px; }
+  .sec h3 small { font-weight: normal; color: #666; }
+  .big { font-size: 22px; font-weight: bold; }
+  .badge { display: inline-block; font-size: 13px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+  .badge.ok { background: #e6f4ea; color: #137333; }
+  .badge.less { background: #fef7e0; color: #8a5300; }
+  .streak { background: #e8f0fe; color: #174ea6; border-radius: 8px; padding: 8px 10px; font-weight: bold; }
+  .kv { margin: 8px 0; }
+  .kv b { display: block; font-size: 13px; color: #555; }
+  .kv p { margin: 2px 0; white-space: pre-wrap; }
+  .hbar { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 14px; }
+  .hbar .nm { width: 3.6em; }
+  .hbar .track { flex: 1; background: #f1f3f4; border-radius: 4px; height: 14px; overflow: hidden; }
+  .hbar .fill { height: 100%; border-radius: 4px; }
+  .hbar .v { width: 6.5em; text-align: right; }
+  .days { display: flex; align-items: flex-end; gap: 4px; height: 130px; position: relative; margin: 8px 0 2px; }
+  .days .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+  .days .bar { width: 70%; border-radius: 4px 4px 0 0; min-height: 2px; }
+  .days .num { font-size: 11px; color: #444; margin-bottom: 2px; }
+  .days .target { position: absolute; left: 0; right: 0; border-top: 2px dashed #d93025; }
+  .daylabels { display: flex; gap: 4px; font-size: 11px; color: #555; text-align: center; }
+  .daylabels div { flex: 1; }
+  .todo-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f1f3f4; }
+  .todo-item input { width: 22px; height: 22px; margin-top: 1px; }
+  .todo-item .tt { flex: 1; }
+  .todo-item .due { font-size: 13px; color: #555; }
+  .todo-item .due.near { color: #b3261e; font-weight: bold; }
+  .todo-item .del { background: none; color: #999; font-size: 18px; padding: 0 6px; margin: 0; }
+  .muted { color: #777; font-size: 14px; }
   #log { color: #b3261e; font-size: 14px; white-space: pre-wrap; }
   #detail { color: #777; font-size: 12px; white-space: pre-wrap; }
 </style>
@@ -43,11 +82,12 @@
       <input id="student-id" placeholder="例: T01" autocomplete="off" autocapitalize="characters">
     </div>
     <div class="row">
-      <label for="access-code">合言葉</label>
-      <input id="access-code" placeholder="先生から聞いた合言葉" autocomplete="off">
+      <label for="access-code">パスワード</label>
+      <input id="access-code" placeholder="先生から配られた6けたの数字" autocomplete="off" inputmode="numeric">
     </div>
     <p style="font-size:14px; color:#555;">今日の学習(教科・時間・つまずいた点・次にやること)を1〜3分、そのまま話してください。</p>
     <button id="btn-start" onclick="startRec()">録音を始める</button>
+    <button class="sub" onclick="openMy()">ふりかえりを見る</button>
   </div>
 
   <!-- 2. 録音中 -->
@@ -85,6 +125,11 @@
     <div class="field"><label>計画との差</label><textarea id="f-plan_gap"></textarea></div>
     <div class="field"><label>次の目標</label><textarea id="f-next_goal"></textarea></div>
     <div class="field"><label>支援希望</label><textarea id="f-support"></textarea></div>
+    <div class="field">
+      <label>やることリストに追加(期限のある課題など。いらないものはチェックを外す)</label>
+      <div id="todo-box"></div>
+      <button class="sub" type="button" onclick="addTodoRow('', '', true)">+ 追加する</button>
+    </div>
     <div id="questions"></div>
     <button class="save" id="btn-save" onclick="saveEntry()">この内容で保存する</button>
     <button class="sub" onclick="resetToStart()">録音し直す</button>
@@ -94,7 +139,52 @@
   <!-- 5. 完了 -->
   <div class="card hidden" id="card-done">
     <p>保存しました。おつかれさま。</p>
+    <button onclick="openMy()">ふりかえりを見る</button>
     <button class="sub" onclick="resetToStart()">最初の画面に戻る</button>
+  </div>
+
+  <!-- 6. ふりかえり -->
+  <div class="card hidden" id="card-my">
+    <div class="my-head">
+      <h2>ふりかえり <small id="my-who" class="muted"></small></h2>
+      <button class="sub" onclick="resetToStart()">戻る</button>
+    </div>
+    <p id="my-loading" class="muted">読み込み中…</p>
+    <div id="my-body" class="hidden">
+      <p id="my-streak" class="streak"></p>
+
+      <div class="sec">
+        <h3>昨日の学習 <small id="y-label"></small></h3>
+        <div id="y-none" class="muted hidden">昨日の記録はありません。</div>
+        <div id="y-has">
+          <div><span class="big" id="y-total"></span><span id="y-badge" class="badge"></span></div>
+          <div id="y-subj"></div>
+          <div class="kv"><b>学習内容</b><p id="y-content"></p></div>
+          <div class="kv"><b>次にやると決めたこと(今日やること)</b><p id="y-next"></p></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h3>やることリスト <small id="todo-done"></small></h3>
+        <div id="todo-list"></div>
+        <p id="todo-empty" class="muted hidden">いまのところ、やることはありません。録音で「○日までに△△」と話すと追加されます。</p>
+      </div>
+
+      <div class="sec">
+        <h3>この1週間 <small id="w-range"></small></h3>
+        <div><span class="big" id="w-total"></span> <span class="muted" id="w-avg"></span></div>
+        <div class="days" id="w-days"></div>
+        <div class="daylabels" id="w-labels"></div>
+        <p class="muted" style="font-size:12px;margin:2px 0 8px;">赤い点線=1日の目標</p>
+        <div id="w-subj"></div>
+      </div>
+
+      <div class="sec">
+        <h3>これまでの合計</h3>
+        <div><span class="big" id="a-total"></span> <span class="muted" id="a-days"></span></div>
+        <div id="a-subj"></div>
+      </div>
+    </div>
   </div>
 
   <p id="log"></p>
@@ -114,7 +204,8 @@ const ATTEMPTS = [
 ];
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const ID_PATTERN  = /^[A-Za-z0-9-]{1,10}$/;
-const TARGET_MIN  = 180;     // 1日の目標学習時間(分)。画面の「目標まであと○分」に使う
+let   TARGET_MIN  = 180;     // 1日の目標学習時間(分)。サーバーの設定(コード.gas)が届いたらそちらに合わせる
+const SUBJ_COLORS = { math: '#1a73e8', physics: '#e8710a', chemistry: '#188038', biology: '#9334e6', english: '#d93025', other: '#80868b' };
 const SUBJECTS = [['math', '数学'], ['physics', '物理'], ['chemistry', '化学'],
                   ['biology', '生物'], ['english', '英語'], ['other', 'その他']];
 
@@ -128,10 +219,10 @@ function val(id)  { return $(id).value; }
 function show(id) { $(id).classList.remove('hidden'); }
 function hide(id) { $(id).classList.add('hidden'); }
 function log(msg, detail) { $('log').textContent = msg || ''; $('detail').textContent = detail || ''; }
-const CARDS = ['card-id', 'card-rec', 'card-wait', 'card-error', 'card-confirm', 'card-done'];
+const CARDS = ['card-id', 'card-rec', 'card-wait', 'card-error', 'card-confirm', 'card-done', 'card-my'];
 function only(id) { CARDS.forEach(c => c === id ? show(c) : hide(c)); }
 
-// 生徒IDと合言葉を端末に覚えておく(使えない環境でも動くようにtry/catch)
+// 生徒IDとパスワードを端末に覚えておく(使えない環境でも動くようにtry/catch)
 const store = {
   get(k)    { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -185,19 +276,24 @@ function resetToStart() {
   only('card-id');
 }
 
+// IDとパスワードの入力チェック(OKなら端末に覚える)
+function checkCreds() {
+  const c = creds();
+  if (!c.studentId)                  { log('生徒IDを入力してください'); return false; }
+  if (!ID_PATTERN.test(c.studentId)) { log('生徒IDは半角英数字で入力してください(例: T01)'); return false; }
+  if (!c.accessCode)                 { log('パスワードを入力してください'); return false; }
+  store.set('vj_sid', c.studentId);
+  store.set('vj_code', c.accessCode);
+  return true;
+}
+
 // ---------- 録音 ----------
 async function startRec() {
   if (busy) return;
-  const c = creds();
-  if (!c.studentId)                  { log('生徒IDを入力してください'); return; }
-  if (!ID_PATTERN.test(c.studentId)) { log('生徒IDは半角英数字で入力してください(例: T01)'); return; }
-  if (!c.accessCode)                 { log('合言葉を入力してください'); return; }
+  if (!checkCreds()) return;
   if (!navigator.mediaDevices || !window.MediaRecorder) {
     log('この端末・ブラウザは録音に対応していません。Chrome または Safari の最新版で開いてください'); return;
   }
-  store.set('vj_sid', c.studentId);
-  store.set('vj_code', c.accessCode);
-
   busy = true;
   $('btn-start').disabled = true;
   log('');
@@ -288,7 +384,7 @@ async function sendAudio() {
   waitedSec = Math.floor((Date.now() - waitStart) / 1000);
 
   if (!res.ok) {
-    if (res.kind === 'auth') {           // 合言葉・IDの間違いは入力画面に戻す
+    if (res.kind === 'auth') {           // ID・パスワードの間違いは入力画面に戻す
       resetToStart();
       log(res.error);
       return;
@@ -296,6 +392,7 @@ async function sendAudio() {
     showError(res);
     return;
   }
+  if (res.target) TARGET_MIN = res.target;
   entry = res.entry || {};
   renderConfirm(entry);
   only('card-confirm');
@@ -364,8 +461,29 @@ function renderConfirm(en) {
     const input = document.createElement('input'); input.id = 'q' + i; input.placeholder = '答えたくなければ空欄でOK';
     wrap.appendChild(label); wrap.appendChild(input); box.appendChild(wrap);
   });
+  // やることリスト(AIが聞き取ったもの)
+  $('todo-box').innerHTML = '';
+  (en.todos || []).forEach(t => addTodoRow(t.task, t.due, true));
+
   $('btn-save').disabled = false;
   $('save-err').textContent = '';
+}
+
+function addTodoRow(task, due, checked) {
+  const row = document.createElement('div');
+  row.className = 'todo-row';
+  const cb = document.createElement('input');  cb.type = 'checkbox'; cb.checked = checked; cb.className = 't-on';
+  const tx = document.createElement('input');  tx.className = 't-task'; tx.value = task || ''; tx.placeholder = 'やること(例: 数学の課題提出)';
+  const dt = document.createElement('input');  dt.type = 'date'; dt.className = 't-due'; dt.value = due || '';
+  row.appendChild(cb); row.appendChild(tx); row.appendChild(dt);
+  $('todo-box').appendChild(row);
+  if (!task) tx.focus();
+}
+
+function readTodos() {
+  return Array.from(document.querySelectorAll('#todo-box .todo-row'))
+    .filter(r => r.querySelector('.t-on').checked && r.querySelector('.t-task').value.trim())
+    .map(r => ({ task: r.querySelector('.t-task').value.trim(), due: r.querySelector('.t-due').value }));
 }
 
 // 入力欄から教科別の分数を読む(両方空欄の教科は null)
@@ -427,7 +545,8 @@ async function saveEntry() {
         support: val('f-support'), transcript: (entry.transcript || ''),
         questions: (entry.questions || []), status: (entry.status || '')
       },
-      answers: answers
+      answers: answers,
+      todos: readTodos()
     }, creds()));
   } catch (err) {
     res = { ok: false, error: '通信できませんでした。電波の良い場所でもう一度「保存する」を押してください。', detail: String(err) };
@@ -441,6 +560,159 @@ async function saveEntry() {
   busy = false;
   lastBlob = null;
   only('card-done');
+}
+
+// =====================================================
+//  ふりかえり画面
+// =====================================================
+async function openMy() {
+  if (!checkCreds()) { only('card-id'); return; }
+  log('');
+  only('card-my');
+  show('my-loading'); hide('my-body');
+  $('my-loading').textContent = '読み込み中…';
+  $('my-who').textContent = creds().studentId;
+  let res;
+  try {
+    res = await post(Object.assign({ action: 'mydata' }, creds()));
+  } catch (err) {
+    res = { ok: false, error: '通信できませんでした。電波の良い場所でもう一度開いてください。', detail: String(err) };
+  }
+  if (!res.ok) {
+    if (res.kind === 'auth') { only('card-id'); log(res.error); return; }
+    $('my-loading').textContent = res.error || '読み込めませんでした';
+    log('', res.detail || '');
+    return;
+  }
+  if (res.target) TARGET_MIN = res.target;
+  renderMy(res);
+  hide('my-loading'); show('my-body');
+}
+
+function renderMy(d) {
+  // 連続記録
+  $('my-streak').textContent = d.streak > 0
+    ? '連続 ' + d.streak + ' 日 記録中!この調子で続けよう'
+    : '今日から記録をはじめよう';
+
+  // 昨日
+  const y = d.yesterday;
+  $('y-label').textContent = y.label;
+  if (y.has) {
+    hide('y-none'); show('y-has');
+    $('y-total').textContent = fmtHM(y.total);
+    const ok = y.total >= TARGET_MIN;
+    $('y-badge').className = 'badge ' + (ok ? 'ok' : 'less');
+    $('y-badge').textContent = ok ? '目標達成' : '目標まであと ' + fmtHM(TARGET_MIN - y.total);
+    renderSubjBars('y-subj', y.minutes, false);
+    $('y-content').textContent = y.content || '(記録なし)';
+    $('y-next').textContent    = y.next || '(記録なし)';
+  } else {
+    show('y-none'); hide('y-has');
+  }
+
+  // やることリスト
+  renderTodos(d.todos || []);
+  $('todo-done').textContent = d.doneCount ? '(これまでに ' + d.doneCount + ' 件 完了)' : '';
+
+  // 1週間
+  const w = d.week;
+  $('w-range').textContent = w.days7[0].label + '〜' + w.days7[w.days7.length - 1].label;
+  $('w-total').textContent = fmtHM(w.total);
+  $('w-avg').textContent   = '(1日平均 ' + fmtHM(Math.round(w.total / 7)) + ')';
+  renderDayBars(w.days7);
+  renderSubjBars('w-subj', w.minutes, true);
+
+  // これまで
+  $('a-total').textContent = fmtHM(d.all.total);
+  $('a-days').textContent  = '(記録した日 ' + d.all.days + ' 日)';
+  renderSubjBars('a-subj', d.all.minutes, true);
+}
+
+// 教科別の横棒。showZero=false なら0分の教科は出さない
+function renderSubjBars(boxId, minutes, showZero) {
+  const box = $(boxId);
+  box.innerHTML = '';
+  const max = Math.max(1, ...SUBJECTS.map(([k]) => minutes[k] || 0));
+  SUBJECTS.forEach(([k, name]) => {
+    const v = minutes[k] || 0;
+    if (!v && !showZero) return;
+    const row = document.createElement('div'); row.className = 'hbar';
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = name;
+    const tr = document.createElement('div');  tr.className = 'track';
+    const fi = document.createElement('div');  fi.className = 'fill';
+    fi.style.width = (v / max * 100) + '%'; fi.style.background = SUBJ_COLORS[k];
+    const vv = document.createElement('span'); vv.className = 'v'; vv.textContent = fmtHM(v);
+    tr.appendChild(fi); row.appendChild(nm); row.appendChild(tr); row.appendChild(vv);
+    box.appendChild(row);
+  });
+}
+
+// 1週間の縦棒(目標の線つき)
+function renderDayBars(days) {
+  const box = $('w-days'), labels = $('w-labels');
+  box.innerHTML = ''; labels.innerHTML = '';
+  const top = Math.max(TARGET_MIN * 1.25, ...days.map(x => x.total || 0));
+  const H = 110;   // 棒の最大の高さ(px)。数字の分を残す
+  days.forEach(x => {
+    const col = document.createElement('div'); col.className = 'col';
+    const num = document.createElement('div'); num.className = 'num';
+    num.textContent = (x.total === null) ? '-' : (Math.floor(x.total / 60) + ':' + String(x.total % 60).padStart(2, '0'));
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const v = x.total || 0;
+    bar.style.height = Math.round(v / top * H) + 'px';
+    bar.style.background = (x.total === null) ? '#dadce0' : (v >= TARGET_MIN ? '#34a853' : '#fbbc04');
+    col.appendChild(num); col.appendChild(bar); box.appendChild(col);
+    const lb = document.createElement('div');
+    lb.textContent = x.today ? '今日' : x.label.replace(/^\d+\//, '');
+    labels.appendChild(lb);
+  });
+  const line = document.createElement('div'); line.className = 'target';
+  line.style.bottom = Math.round(TARGET_MIN / top * H) + 'px';
+  box.appendChild(line);
+}
+
+function renderTodos(todos) {
+  const box = $('todo-list');
+  box.innerHTML = '';
+  if (!todos.length) { show('todo-empty'); return; }
+  hide('todo-empty');
+  todos.forEach(t => {
+    const item = document.createElement('div'); item.className = 'todo-item';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.title = '終わったらチェック';
+    const tt = document.createElement('div');   tt.className = 'tt';
+    const task = document.createElement('div'); task.textContent = t.task;
+    const due = document.createElement('div');  due.className = 'due';
+    if (t.daysLeft !== null) {
+      due.textContent = '期限 ' + t.dueLabel + '  ' +
+        (t.daysLeft < 0 ? '(' + (-t.daysLeft) + '日過ぎています)' : t.daysLeft === 0 ? '(今日まで!)' : '(あと' + t.daysLeft + '日)');
+      if (t.daysLeft <= 1) due.classList.add('near');
+    } else {
+      due.textContent = '期限なし';
+    }
+    const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = '削除';
+    tt.appendChild(task); tt.appendChild(due);
+    item.appendChild(cb); item.appendChild(tt); item.appendChild(del);
+    box.appendChild(item);
+
+    cb.addEventListener('change', () => { if (cb.checked) changeTodo(t.id, '完了', item, cb); });
+    del.addEventListener('click', () => changeTodo(t.id, '削除', item, null));
+  });
+}
+
+async function changeTodo(todoId, state, item, cb) {
+  item.style.opacity = '0.4';
+  let res;
+  try { res = await post(Object.assign({ action: 'todo', todoId: todoId, state: state }, creds())); }
+  catch (err) { res = { ok: false, error: '通信できませんでした' }; }
+  if (res.ok) {
+    item.remove();
+    if (!$('todo-list').children.length) show('todo-empty');
+  } else {
+    item.style.opacity = '1';
+    if (cb) cb.checked = false;
+    log(res.error || '更新できませんでした');
+  }
 }
 </script>
 </body>
