@@ -23,6 +23,12 @@
   .q input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px; }
   .hidden { display: none; }
   .err { color: #b3261e; font-weight: bold; }
+  .subj-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 16px; }
+  .subj-row .sname { width: 4.5em; font-weight: bold; }
+  .subj-row input { width: 4.2em; font-size: 18px; padding: 6px; box-sizing: border-box; text-align: right; }
+  #total-line { font-weight: bold; padding: 8px 10px; border-radius: 8px; }
+  #total-line.ok   { background: #e6f4ea; color: #137333; }
+  #total-line.less { background: #fef7e0; color: #8a5300; }
   #log { color: #b3261e; font-size: 14px; white-space: pre-wrap; }
   #detail { color: #777; font-size: 12px; white-space: pre-wrap; }
 </style>
@@ -70,7 +76,11 @@
     <p>AIの整理結果です。間違いがあれば直接直してください。</p>
     <p id="status-note" class="hidden" style="background:#fef7e0; border-radius:8px; padding:10px; font-size:14px;"></p>
     <div class="field"><label>学習内容</label><textarea id="f-content"></textarea></div>
-    <div class="field"><label>教科別の学習時間</label><textarea id="f-subjects"></textarea></div>
+    <div class="field">
+      <label>教科別の学習時間(違っていたら直してください。やっていない教科は空欄のまま)</label>
+      <div id="subj-box"></div>
+      <p id="total-line"></p>
+    </div>
     <div class="field"><label>困難・つまずき</label><textarea id="f-difficulties"></textarea></div>
     <div class="field"><label>計画との差</label><textarea id="f-plan_gap"></textarea></div>
     <div class="field"><label>次の目標</label><textarea id="f-next_goal"></textarea></div>
@@ -104,6 +114,9 @@ const ATTEMPTS = [
 ];
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const ID_PATTERN  = /^[A-Za-z0-9-]{1,10}$/;
+const TARGET_MIN  = 180;     // 1日の目標学習時間(分)。画面の「目標まであと○分」に使う
+const SUBJECTS = [['math', '数学'], ['physics', '物理'], ['chemistry', '化学'],
+                  ['biology', '生物'], ['english', '英語'], ['other', 'その他']];
 
 let recorder = null, stream = null, chunks = [], mimeType = '', lastBlob = null;
 let recStart = 0, timerId = null, waitId = null, waitedSec = 0, durSec = 0;
@@ -124,6 +137,19 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 };
 window.addEventListener('load', () => {
+  // 教科ごとの「○時間○分」入力欄を作る
+  const box = $('subj-box');
+  SUBJECTS.forEach(([key, name]) => {
+    const row = document.createElement('div');
+    row.className = 'subj-row';
+    row.innerHTML = '<span class="sname"></span>' +
+      '<input type="number" inputmode="numeric" min="0" max="16" id="h-' + key + '"> 時間 ' +
+      '<input type="number" inputmode="numeric" min="0" max="59" id="m-' + key + '"> 分';
+    row.querySelector('.sname').textContent = name;
+    box.appendChild(row);
+  });
+  box.addEventListener('input', updateTotal);
+
   $('student-id').value  = store.get('vj_sid');
   $('access-code').value = store.get('vj_code');
 });
@@ -308,8 +334,14 @@ async function post(body, timeoutMs) {
 // ---------- 確認画面 ----------
 function renderConfirm(en) {
   $('f-content').value      = en.content || '';
-  $('f-subjects').value     = (en.subjects || []).map(s =>
-    (s.subject || '') + (s.minutes ? ':' + s.minutes + '分' : '')).join(' / ');
+  const mins = en.minutes || {};
+  SUBJECTS.forEach(([key]) => {
+    const v = mins[key];
+    const has = (typeof v === 'number' && v >= 0);
+    $('h-' + key).value = has ? Math.floor(v / 60) : '';
+    $('m-' + key).value = has ? v % 60 : '';
+  });
+  updateTotal();
   $('f-difficulties').value = en.difficulties || '';
   $('f-plan_gap').value     = en.plan_gap || '';
   $('f-next_goal').value    = en.next_goal || '';
@@ -336,10 +368,48 @@ function renderConfirm(en) {
   $('save-err').textContent = '';
 }
 
+// 入力欄から教科別の分数を読む(両方空欄の教科は null)
+function readMinutes() {
+  const out = {};
+  SUBJECTS.forEach(([key]) => {
+    const h = $('h-' + key).value.trim(), m = $('m-' + key).value.trim();
+    if (h === '' && m === '') { out[key] = null; return; }
+    const v = (Number(h) || 0) * 60 + (Number(m) || 0);
+    out[key] = Math.max(0, Math.round(v));
+  });
+  return out;
+}
+
+function fmtHM(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return m + '分';
+  return h + '時間' + (m ? m + '分' : '');
+}
+
+function updateTotal() {
+  const mins  = readMinutes();
+  const total = SUBJECTS.reduce((t, [key]) => t + (mins[key] || 0), 0);
+  const line  = $('total-line');
+  if (total >= TARGET_MIN) {
+    line.className = 'ok';
+    line.textContent = '合計 ' + fmtHM(total) + '(目標 ' + fmtHM(TARGET_MIN) + ' 達成!)';
+  } else {
+    line.className = 'less';
+    line.textContent = '合計 ' + fmtHM(total) + '(目標 ' + fmtHM(TARGET_MIN) + ' まであと ' + fmtHM(TARGET_MIN - total) + ')';
+  }
+  return total;
+}
+
 // ---------- 保存 ----------
 async function saveEntry() {
-  $('btn-save').disabled = true;
   $('save-err').textContent = '';
+  const minutes = readMinutes();
+  const total = updateTotal();
+  if (total > 16 * 60) {
+    $('save-err').textContent = '合計が16時間を超えています。時間と分の入力を確認してください。';
+    return;
+  }
+  $('btn-save').disabled = true;
   const answers = (entry.questions || []).map((q, i) => {
     const el = $('q' + i);
     return el ? el.value.trim() : '';
@@ -350,7 +420,7 @@ async function saveEntry() {
       action: 'save',
       durationSec: durSec,
       waitSec: waitedSec,
-      subjectsText: val('f-subjects'),
+      minutes: minutes,
       entry: {
         content: val('f-content'), difficulties: val('f-difficulties'),
         plan_gap: val('f-plan_gap'), next_goal: val('f-next_goal'),
